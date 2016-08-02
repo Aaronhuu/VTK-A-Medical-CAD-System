@@ -1,5 +1,5 @@
 # VTK-A-Medical-CAD-System
-My Final Year Project
+Based On pyqt and vtk for python
 
 
 This Project is made for helping the brace making industry to simplify the technology process.
