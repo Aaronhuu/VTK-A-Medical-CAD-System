@@ -5,6 +5,7 @@ My Final Year Project
 This Project is made for helping the brace making industry to simplify the technology process.
 Use vtk and qt as sdks
 Function:  
+
             1. read .stl file,
             2. smooth filter
             3. add point to the model to determine the position of spline
