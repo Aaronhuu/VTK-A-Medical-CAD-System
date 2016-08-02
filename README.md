@@ -1,5 +1,5 @@
 # VTK-A-Medical-CAD-System
-Based On pyqt and vtk for python
+Based on PyQt4 and vtk 7.0.0
 
 
 This Project is made for helping the brace making industry to simplify the technology process.
