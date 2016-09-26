@@ -7,17 +7,28 @@ from PyQt4 import QtCore, QtGui
 from vtk.qt4.QVTKRenderWindowInteractor import QVTKRenderWindowInteractor
 from vtk.vtkImagingCorePython import vtkImageBlend
 from vtk.vtkCommonDataModelPython import vtkPolyData
+from math import sqrt
  
 class MainWindow(QtGui.QMainWindow):
     height = 80*1.78
     splineOrigin= (160.0,120.0)
     splineTop = 612
-    splineCurvePoints = []   
+    splineCurvePoints = []
+    height_default = {}
+    firstlogin = True
     
+    
+    def initialHeight(self):
+        for i in range(0,100):
+            self.height_default[i] = 50
+        #print(self.height_default[self.perHeight])
+        pass
+     
     def __init__(self, parent = None):
         QtGui.QMainWindow.__init__(self, parent)
-        self.setWindowTitle("CAD")
+        self.setWindowTitle("FYP")
         #self.statusBar()
+        self.initialHeight()
  
         self.frame = QtGui.QFrame()
         self.frame2 = QtGui.QFrame()
@@ -100,7 +111,8 @@ class MainWindow(QtGui.QMainWindow):
 
         
         self.toolbar = self.theToolbar()
-        self.ren.AddActor(self.humanBody())
+        self.body = self.humanBody()
+        self.ren.AddActor(self.body)
         self.BodyCut = self.cutPlane(True)
         self.ren.AddActor(self.BodyCut)
         self.ren.AddActor(self.spinePlane())
@@ -139,38 +151,15 @@ class MainWindow(QtGui.QMainWindow):
         self.renderWindowInteractor.Initialize()
         self.renderWindowInteractor2.Initialize()
         self.renderWindowInteractor3.Initialize()
-        self.renderWindowInteractor4.Initialize()
-    
-    def reshape(self):
-        pPolyRead = vtk.vtkPolyDataReader()
-        pPolyRead.SetFileName("organ.stl")
-        pPolyRead.SetVectorsName("mode")
-        
-        pNormal = vtk.vtkPolyDataNormals()
-        pNormal.SetInputConnection(pPolyRead.GetOutputPort())
-        
-        pWarpVec = vtk.vtkWarpVector()
-        pWarpVec.SetScaleFactor(1.0)
-        pWarpVec.SetInputConnection(pNormal.GetOutputPort())
-        
-        pVecDot = vtk.vtkVectorDot()
-        pVecDot.SetInputConnection(pWarpVec.GetOutputPort())
-        
-        pMapper = vtk.vtkPolyDataMapper()
-        pMapper.SetInputConnection(pWarpVec.GetOutputPort())
-        
-        pActor = vtk.vtkActor()
-        pActor.SetMapper(pMapper)
-        
-        return pActor
-    
+        self.renderWindowInteractor4.Initialize()    
+
     def humanBody(self):
         #Load stl file
         filename = "organ.stl"
         # Create a reader
         self.reader = vtk.vtkSTLReader()
         self.reader.SetFileName(filename)
-         
+        
         #make the actor smooth
         smoothFiliter = vtk.vtkSmoothPolyDataFilter()
         if vtk.VTK_MAJOR_VERSION <= 5:
@@ -189,12 +178,31 @@ class MainWindow(QtGui.QMainWindow):
         self.normFilter.Update()
         #finish compute normal
         
+        
+        extractEdges = vtk.vtkExtractEdges()
+        extractEdges.SetInputConnection(self.normFilter.GetOutputPort())
+        extractEdges.Update()
+        
+        #print(extractEdges.GetOutput().GetPoints().GetNumberOfPoints())
+        #print(extractEdges.GetOutput().GetLines().GetNumberOfCells())
+        if self.firstlogin:
+            self.universalEdges = extractEdges
+            EdgesFile = extractEdges
+            self.firstlogin = False
+        else:
+            EdgesFile = self.universalEdges
+        
+        
+        for i in range(0,EdgesFile.GetOutput().GetNumberOfCells()):
+            line = vtk.vtkLine().SafeDownCast(EdgesFile.GetOutput().GetCell(i))
+            break
+        
         # Create a mapper
         mapper = vtk.vtkPolyDataMapper()
         if vtk.VTK_MAJOR_VERSION <= 5:
             mapper.SetInput(self.reader.GetOutput())
         else:
-            mapper.SetInputConnection(self.normFilter.GetOutputPort())
+            mapper.SetInputConnection(EdgesFile.GetOutputPort())
         
         # Create an actor
         actor = vtk.vtkActor()
@@ -431,7 +439,7 @@ class MainWindow(QtGui.QMainWindow):
         plane.SetNormal(0,0,1)
         cutter=vtk.vtkCutter()
         cutter.SetCutFunction(plane)
-        cutter.SetInputConnection(self.normFilter.GetOutputPort())
+        cutter.SetInputConnection(self.reader.GetOutputPort())
         cutter.Update()
         cutterMapper=vtk.vtkPolyDataMapper()
         cutterMapper.SetInputConnection( cutter.GetOutputPort())
@@ -523,6 +531,8 @@ class MainWindow(QtGui.QMainWindow):
         self.ren2.RemoveActor(self.SecCut)
         
         self.height = value*1.78
+        self.horizontalSlider.setValue(self.height_default[value])
+        
         self.BodyCut = self.cutPlane(True)
         self.SecCut = self.cutPlane(False)
         
@@ -615,6 +625,9 @@ class MainWindow(QtGui.QMainWindow):
         self.horizontalSlider = QtGui.QSlider(self.tabWidgetPage2)
         self.horizontalSlider.setOrientation(QtCore.Qt.Horizontal)
         self.horizontalSlider.setObjectName("horizontalSlider")
+        self.horizontalSlider.setValue(50)
+        self.horizontalSlider.valueChanged[int].connect(self.deformSurface)
+        
         self.verticalLayout2.addWidget(self.horizontalSlider)
         self.verticalLayout2.addWidget(self.buttonBox)
         self.tabWidget.addTab(self.tabWidgetPage2, "")
@@ -670,7 +683,36 @@ class MainWindow(QtGui.QMainWindow):
         self.renderWindowInteractor4.Render()
         self.renderWindowInteractor3.Render()
 
-
+    def deformSurface(self,value):
+        default = self.height_default[self.height/1.78]
+        change = (value - default)/100.0*3
+        self.height_default[self.height/1.78] = value
+        points = self.universalEdges.GetOutput().GetPoints()
+        for point in range(0,points.GetNumberOfPoints()):
+            if self.height+15>points.GetPoint(point)[2]>self.height-15:
+                #compute change of two axis
+                if points.GetPoint(point)[2]>self.height:
+                    #not finish
+                    newX = points.GetPoint(point)[0] + change*(points.GetPoint(point)[2]-self.height-15)/3
+                    newY = points.GetPoint(point)[1] + change*(points.GetPoint(point)[2]-self.height-15)/3/sqrt(3)
+                elif points.GetPoint(point)[2]<self.height:
+                    newX = points.GetPoint(point)[0] + change*(self.height-15-points.GetPoint(point)[2])/3
+                    newY = points.GetPoint(point)[1] + change*(self.height-15-points.GetPoint(point)[2])/3/sqrt(3)
+                else:
+                    newX = points.GetPoint(point)[0] + change*(points.GetPoint(point)[2]-self.height)
+                    newY = points.GetPoint(point)[1] + change*(points.GetPoint(point)[2]-self.height)/sqrt(3)
+                
+                newPoint = [newX,newY,points.GetPoint(point)[2]]
+                self.universalEdges.GetOutput().GetPoints().SetPoint(point,newPoint)
+                
+        self.ren.RemoveActor(self.body)
+        self.body = self.humanBody()
+        self.ren.AddActor(self.body)
+        self.renderWindowInteractor.Render()
+        pass 
+                
+        
+        
 if __name__ == "__main__":
     app = QtGui.QApplication(sys.argv)
     window = MainWindow()
