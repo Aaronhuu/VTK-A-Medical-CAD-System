@@ -21,7 +21,8 @@ This project haven't finished yet, some functions still need to be made.
 
 You can contact me if any code is unclear, I will reply ASAP:
 
-        Wechat: bygones-h, ins: aaronhu_ or my facebook: Tianjian Hu
+        Wechat: bygones-h, ins: aaronhu.me or my facebook: Tianjian Hu
+        My personal webpage: www.aaronhu.me
 This reprostory contains all the test file I made. Before you run the __init__.py in CADwindow, you should install:
 
   1. python (my version is 2.7, I am not sure whether your version will work).
