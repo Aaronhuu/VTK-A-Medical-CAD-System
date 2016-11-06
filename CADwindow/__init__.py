@@ -8,20 +8,33 @@ from vtk.qt4.QVTKRenderWindowInteractor import QVTKRenderWindowInteractor
 from vtk.vtkImagingCorePython import vtkImageBlend
 from vtk.vtkCommonDataModelPython import vtkPolyData
 from math import sqrt
+import multiprocessing
+import s_rc
+import time
+from PyQt4.Qt import QPixmap, QThread, QTcpServer
+from PyQt4.QtGui import QSplashScreen
  
 class MainWindow(QtGui.QMainWindow):
     height = 80*1.78
-    splineOrigin= (160.0,120.0)
-    splineTop = 612
+    splineOrigin= (196,95)
+    splineTop = 635
     splineCurvePoints = []
     height_default = {}
     firstlogin = True
+    heightValue = 0
+    typeIndex =1
+    typeTF={}
+    typeWords = ["","1.line","2.paracurve","3.Normal Distribution Curve","4.Bezier","5.upper bezier",""]
+    cigmaNum = [20,15,50,50,80,80,10]
+    bodyfile = "organ.stl"
+    viewingType = False
+    
     
     
     def initialHeight(self):
         for i in range(0,100):
             self.height_default[i] = 50
-        #print(self.height_default[self.perHeight])
+#         print(self.height_default[self.perHeight])
         pass
      
     def __init__(self, parent = None):
@@ -29,6 +42,7 @@ class MainWindow(QtGui.QMainWindow):
         self.setWindowTitle("FYP")
         #self.statusBar()
         self.initialHeight()
+        self.p1 = multiprocessing.Process(target=self.setSliderHValue,args=(2,))
  
         self.frame = QtGui.QFrame()
         self.frame2 = QtGui.QFrame()
@@ -115,8 +129,10 @@ class MainWindow(QtGui.QMainWindow):
         self.ren.AddActor(self.body)
         self.BodyCut = self.cutPlane(True)
         self.ren.AddActor(self.BodyCut)
-        self.ren.AddActor(self.spinePlane())
-        self.ren.AddActor(self.words("Whole Body"))
+        self.splineP = self.spinePlane()
+        self.ren.AddActor(self.splineP)
+        self.deformTypeWords = self.words("Whole Body")
+        self.ren.AddActor(self.deformTypeWords)
         
         self.SecCut = self.cutPlane(False)
         self.ren2.AddActor(self.SecCut)
@@ -145,17 +161,21 @@ class MainWindow(QtGui.QMainWindow):
         self.frame4.setLayout(self.vl4)
         
         self.setCentralWidget(self.splitter())
- 
+        
+        self.p1.start()
         self.show()
         self.AddObserverOfRen3()
+        self.speedup()
         self.renderWindowInteractor.Initialize()
         self.renderWindowInteractor2.Initialize()
         self.renderWindowInteractor3.Initialize()
-        self.renderWindowInteractor4.Initialize()    
+        self.renderWindowInteractor4.Initialize()  
+        
+        self.showFullScreen()  
 
     def humanBody(self):
         #Load stl file
-        filename = "organ.stl"
+        filename = self.bodyfile
         # Create a reader
         self.reader = vtk.vtkSTLReader()
         self.reader.SetFileName(filename)
@@ -179,23 +199,24 @@ class MainWindow(QtGui.QMainWindow):
         #finish compute normal
         
         
-        extractEdges = vtk.vtkExtractEdges()
-        extractEdges.SetInputConnection(self.normFilter.GetOutputPort())
-        extractEdges.Update()
         
-        #print(extractEdges.GetOutput().GetPoints().GetNumberOfPoints())
-        #print(extractEdges.GetOutput().GetLines().GetNumberOfCells())
         if self.firstlogin:
-            self.universalEdges = extractEdges
-            EdgesFile = extractEdges
+            self.universalEdges = self.normFilter
+            EdgesFile = self.normFilter
             self.firstlogin = False
         else:
             EdgesFile = self.universalEdges
-        
-        
-        for i in range(0,EdgesFile.GetOutput().GetNumberOfCells()):
-            line = vtk.vtkLine().SafeDownCast(EdgesFile.GetOutput().GetCell(i))
-            break
+            
+            
+        if self.viewingType:
+            extractEdges = vtk.vtkExtractEdges()
+            extractEdges.SetInputConnection(self.universalEdges.GetOutputPort())
+            extractEdges.Update()
+            EdgesFile = extractEdges
+            pass
+        else:
+            EdgesFile = self.universalEdges
+            pass
         
         # Create a mapper
         mapper = vtk.vtkPolyDataMapper()
@@ -266,11 +287,12 @@ class MainWindow(QtGui.QMainWindow):
         sliceActor = self.spinePlane()
         #print(sliceActor.GetBounds())
         bs=sliceActor.GetBounds()
+        #print bs
         igs = imageActor.GetBounds()
-        scaleNum = max((-bs[0]+bs[1])/igs[1],(bs[3]-bs[2])/igs[3])
+        scaleNum = max((-bs[0]-80+bs[1])/igs[1],(bs[3]-bs[2])/igs[3]/1.1)
         
         imageActor.SetScale(scaleNum, scaleNum, 0.1)
-        imageActor.SetOrigin(bs[0], 0, 0)
+        imageActor.SetOrigin(bs[0]-16, 0+38, 0)
         
         #print(imageActor.GetOrigin())
         return imageActor
@@ -300,7 +322,7 @@ class MainWindow(QtGui.QMainWindow):
         #Finish layout
         
         return splitter4
-    
+
     def theToolbar(self):
         # Toolbar
         exitAction = QtGui.QAction(QtGui.QIcon('exit24.png'), 'Exit', self)
@@ -314,7 +336,7 @@ class MainWindow(QtGui.QMainWindow):
         
         cutAction = QtGui.QAction(QtGui.QIcon('4.png'),'Cut',self)
         cutAction.setShortcut('Ctrl+K')
-        cutAction.triggered.connect(self.changeSpline)
+        cutAction.triggered.connect(self.handleSave)
         
         self.toolbar = self.addToolBar('Exit')
         self.toolbar.addAction(exitAction)
@@ -325,6 +347,18 @@ class MainWindow(QtGui.QMainWindow):
         }""")
         #Finish Toolbar
         return self.toolbar
+
+    def handleSave(self):
+        stlWriter = vtk.vtkSTLWriter()
+        triangleFilter = vtk.vtkTriangleFilter()
+        clean = vtk.vtkCleanPolyData()
+        triangleFilter.SetInputConnection(self.universalEdges.GetOutputPort())
+        clean.SetInputConnection(triangleFilter.GetOutputPort())
+        stlWriter.SetFileName("out.stl")
+        stlWriter.SetInputConnection(clean.GetOutputPort())
+        stlWriter.Write()
+        print "output success"
+        pass
     
     def handleQuit(self):
         choice = QtGui.QMessageBox.question(self,"Extract!","Leave the App?",QtGui.QMessageBox.Yes | QtGui.QMessageBox.No)
@@ -335,9 +369,41 @@ class MainWindow(QtGui.QMainWindow):
     
     def handleLoad(self):
         fname = QtGui.QFileDialog.getOpenFileName(self, 'Open file', '/Users/aaronhu/Desktop', 'STL *.stl')
+        self.bodyfile  = fname.__str__()
+        
+        self.ren.RemoveActor(self.body)
+        self.ren.RemoveActor(self.BodyCut)
+        self.ren.RemoveActor(self.splineP)
+        
+        
+        self.body = self.humanBody()
+        self.ren.AddActor(self.body)
+        self.BodyCut = self.cutPlane(True)
+        self.ren.AddActor(self.BodyCut)
+        self.splineP = self.spinePlane()
+        self.ren.AddActor(self.splineP)
+        self.ren.ResetCamera()
         print fname
-        #havent done   
-    
+        
+        #havent done  
+        
+    def speedup(self):
+        fname = ""
+        self.bodyfile  = fname.__str__()
+        
+        self.ren.RemoveActor(self.body)
+        self.ren.RemoveActor(self.BodyCut)
+        self.ren.RemoveActor(self.splineP)
+        
+        
+        self.body = self.humanBody()
+        self.ren.AddActor(self.body)
+        self.BodyCut = self.cutPlane(True)
+        self.ren.AddActor(self.BodyCut)
+        self.splineP = self.spinePlane()
+        self.ren.AddActor(self.splineP)
+        self.ren.ResetCamera()
+        
     def SplineCurve(self, first):
         polygonActor = vtk.vtkActor()
         if first:
@@ -405,10 +471,35 @@ class MainWindow(QtGui.QMainWindow):
                 polygonMapper.SetInputData(polygon)
                 polygonMapper.Update()
                 
-            polygonActor.GetProperty().SetColor(0,0,0)
+            polygonActor.GetProperty().SetColor(255,255,0)
             polygonActor.SetMapper(polygonMapper)
         return polygonActor
+    
+    def makeSplineCurve(self):
+        points = vtk.vtkPoints()
+        for point in self.splineCurvePoints:
+                p = [point[0],point[1],0]
+                points.InsertNextPoint(p)
         
+        xSpline = vtk.vtkKochanekSpline()
+        spline = vtk.vtkParametricSpline()
+        spline.SetXSpline(xSpline)
+        spline.SetPoints(points);
+        functionSource = vtk.vtkParametricFunctionSource()
+        functionSource.SetParametricFunction(spline);
+        functionSource.Update();
+        
+        #create mapper
+        mapper = vtk.vtkPolyDataMapper()
+        mapper.SetInputConnection(functionSource.GetOutputPort())
+        actor = vtk.vtkActor()
+        actor.SetMapper(mapper)
+        actor.GetProperty().SetColor(0,0,255)
+        return actor
+        
+        
+        pass
+    
     def spinePlane(self):
         plane=vtk.vtkPlane()
         plane.SetOrigin(0,0,0)
@@ -416,7 +507,7 @@ class MainWindow(QtGui.QMainWindow):
         plane.SetNormal(-0.4,0.7,0)
         cutter=vtk.vtkCutter()
         cutter.SetCutFunction(plane)
-        cutter.SetInputConnection(self.normFilter.GetOutputPort())
+        cutter.SetInputConnection(self.universalEdges.GetOutputPort())
         cutter.Update()
         cutterMapper=vtk.vtkPolyDataMapper()
         cutterMapper.SetInputConnection( cutter.GetOutputPort())
@@ -439,7 +530,7 @@ class MainWindow(QtGui.QMainWindow):
         plane.SetNormal(0,0,1)
         cutter=vtk.vtkCutter()
         cutter.SetCutFunction(plane)
-        cutter.SetInputConnection(self.reader.GetOutputPort())
+        cutter.SetInputConnection(self.universalEdges.GetOutputPort())
         cutter.Update()
         cutterMapper=vtk.vtkPolyDataMapper()
         cutterMapper.SetInputConnection( cutter.GetOutputPort())
@@ -496,42 +587,30 @@ class MainWindow(QtGui.QMainWindow):
         
         return txt
     
-    def cubeAxes(self):
-        cubeAxesActor = vtk.vtkCubeAxesActor()
-        points = self.cutPlane(False).GetBounds()
-        print(points)
-        cubeAxesActor.SetBounds(points)
-        cubeAxesActor.SetCamera(self.ren2.GetActiveCamera())
-        cubeAxesActor.SetXTitle(" ")
-        cubeAxesActor.SetYTitle(" ")
-        cubeAxesActor.GetTitleTextProperty(0).SetColor(0.5, 0.5, 0.5)
-        cubeAxesActor.GetLabelTextProperty(0).SetColor(0.5, 0.5, 0.5)
-        cubeAxesActor.GetTitleTextProperty(1).SetColor(0.5, 0.5, 0.5)
-        cubeAxesActor.GetLabelTextProperty(1).SetColor(0.5, 0.5, 0.5)
-        cubeAxesActor.DrawXGridlinesOn()
-        cubeAxesActor.DrawZGridlinesOn()
-        cubeAxesActor.XAxisMinorTickVisibilityOff()
-        cubeAxesActor.ZAxisMinorTickVisibilityOff()
- 
-        return cubeAxesActor
-    
     def changeSpline(self):
         
         if len(self.splineCurvePoints) >1:
             self.ren4.RemoveActor(self.splinecur)
-            self.splinecur = self.SplineCurve(False)
+            self.splinecur = self.makeSplineCurve()
             self.ren4.AddActor(self.splinecur)
             self.ren4.ResetCamera()
             self.renderWindowInteractor4.Render()
         else:
             pass
     
+    def setSliderHValue(self,interval):
+        #print self.height_default[self.heightValue]
+        self.horizontalSlider.setValue(self.height_default[self.heightValue])
+        pass
+     
     def changeValue(self, value):
         self.ren.RemoveActor(self.BodyCut)
         self.ren2.RemoveActor(self.SecCut)
         
+        #self.horizontalSlider.setValue(self.height_default[value])
         self.height = value*1.78
-        self.horizontalSlider.setValue(self.height_default[value])
+        self.heightValue = value
+        self.p1.run()
         
         self.BodyCut = self.cutPlane(True)
         self.SecCut = self.cutPlane(False)
@@ -545,14 +624,20 @@ class MainWindow(QtGui.QMainWindow):
     
     def HandleAddPoints(self, obj, ev):
         mousePosition = self.renderWindowInteractor3.GetEventPosition()
-        windowSize = (self.frame.width(),self.frame.height())
+        print(mousePosition)
+        origin = self.splineOrigin
+        windowSize = (self.frame.width(),self.splineTop - origin[1])
         bounds = self.spinePlane().GetBounds()
         bounds2 = self.x_ray().GetBounds()
-        boundary = bounds2[1]-bounds[0]
-        origin = self.splineOrigin
-        pointX = (mousePosition[0]-origin[0])/(windowSize[0]/boundary)
-        pointY = (mousePosition[1]-origin[1])/(self.splineTop - origin[1])*(bounds[3]-bounds[2])
+
+        width = bounds2[1]-bounds2[0]
+        height = bounds2[3]-bounds[2]
+        #print(bounds)
         
+        pointX = (mousePosition[0]-origin[0])/(windowSize[0]/width)
+        pointY = (mousePosition[1]-origin[1])/(windowSize[1]/height)
+        
+        print(pointX,pointY)
         if mousePosition[1]>origin[1] and mousePosition[1]<self.splineTop:
             self.ren3.AddActor(self.AddPoint(pointX, pointY, 0))
             self.AddPointToListBySort((int(pointX),int(pointY)))
@@ -578,6 +663,21 @@ class MainWindow(QtGui.QMainWindow):
                     return
             self.splineCurvePoints.append(point)
     
+    def handleChangeType(self):
+        if(self.viewingType):
+            self.viewingType = False
+            pass
+        else:
+            pass
+            self.viewingType = True
+        
+        self.ren.RemoveActor(self.body)
+        self.body = self.humanBody()
+        self.ren.AddActor(self.body)
+        self.renderWindowInteractor.Render()
+        
+        pass
+    
     def setupUI1(self,Form):
         Form.setObjectName("Form")
         Form.resize(130, 170)
@@ -601,8 +701,10 @@ class MainWindow(QtGui.QMainWindow):
         self.verticalLayout.setObjectName("verticalLayout")
         self.pushButton = QtGui.QPushButton(self.tabWidgetPage1)
         self.pushButton.setObjectName("pushButton")
+        self.pushButton.clicked.connect(self.handleChangeType)
         self.verticalLayout.addWidget(self.pushButton)
         self.pushButton_2 = QtGui.QPushButton(self.tabWidgetPage1)
+        self.pushButton_2.clicked.connect(self.handleType)
         self.pushButton_2.setObjectName("pushButton_2")
         self.verticalLayout.addWidget(self.pushButton_2)
         self.pushButton_3 = QtGui.QPushButton(self.tabWidgetPage1)
@@ -622,6 +724,7 @@ class MainWindow(QtGui.QMainWindow):
         self.buttonBox = QtGui.QDialogButtonBox(self.tabWidgetPage2)
         self.buttonBox.setStandardButtons(QtGui.QDialogButtonBox.Cancel|QtGui.QDialogButtonBox.Ok)
         self.buttonBox.setObjectName("buttonBox")
+        self.buttonBox.clicked.connect(self.initialHeight)
         self.horizontalSlider = QtGui.QSlider(self.tabWidgetPage2)
         self.horizontalSlider.setOrientation(QtCore.Qt.Horizontal)
         self.horizontalSlider.setObjectName("horizontalSlider")
@@ -640,11 +743,11 @@ class MainWindow(QtGui.QMainWindow):
         return Form
     
     def retranslateUi(self, Form):
-        self.pushButton.setText("Add")
-        self.pushButton_2.setText("Delete")
+        self.pushButton.setText("Viewing Type")
+        self.pushButton_2.setText("Deform Type")
         self.pushButton_3.setText("Delete All")
         self.pushButton_4.setText("Finish")
-        
+    
     def setupUI2(self,Form):
         Form.setObjectName("Form")
         self.horizontalLayout = QtGui.QHBoxLayout(Form)
@@ -661,12 +764,12 @@ class MainWindow(QtGui.QMainWindow):
         QtCore.QMetaObject.connectSlotsByName(Form)
 
         return Form
-        
+    
     def retranslateUi2(self, Form):
         self.treeWidget.headerItem().setText(0,"Task")
         self.treeWidget.headerItem().setText(1,"Date")
         self.treeWidget.headerItem().setText(2,"Action")
-
+    
     def deleteAllPoints(self):
         self.ren3.RemoveAllViewProps()
         
@@ -682,26 +785,108 @@ class MainWindow(QtGui.QMainWindow):
         self.ren4.ResetCamera()
         self.renderWindowInteractor4.Render()
         self.renderWindowInteractor3.Render()
-
+    
+    def handleType(self):
+        for i in range(0,6):
+            self.typeTF[i]=False
+        
+        self.typeIndex =self.typeIndex+1
+        self.ren.RemoveActor(self.deformTypeWords)
+        
+        if(self.typeIndex>=6):
+            self.typeIndex =1
+        
+        
+        self.cigma = self.cigmaNum[self.typeIndex]
+        self.typeTF[self.typeIndex] = True
+        
+        
+        self.deformTypeWords = self.words(self.typeWords[self.typeIndex])
+        self.ren.AddActor(self.deformTypeWords)
+        self.renderWindowInteractor.Render()
+        
+        self.initialHeight()
+        
+        pass
+    
     def deformSurface(self,value):
-        default = self.height_default[self.height/1.78]
-        change = (value - default)/100.0*3
+        default = self.height_default[int(self.height/1.78)]
+        change = (value - default)/100.0*20
         self.height_default[self.height/1.78] = value
         points = self.universalEdges.GetOutput().GetPoints()
+        if len(self.typeTF) ==0:
+            line = True
+            paracurve = False
+            uniparacurve = False
+            beizer = False
+            upcurve = False
+            change = (value - default)/100.0*3
+            self.cigma = 15
+        else:
+            line = self.typeTF[1]
+            paracurve = self.typeTF[2]
+            uniparacurve = self.typeTF[3]
+            beizer = self.typeTF[4]
+            upcurve = self.typeTF[5]
+        
         for point in range(0,points.GetNumberOfPoints()):
-            if self.height+15>points.GetPoint(point)[2]>self.height-15:
-                #compute change of two axis
+            #unversal paracurve test
+            if uniparacurve:
+                a = change/(self.height*self.height-178*self.height)
+                x = points.GetPoint(point)[2]
+                y = a*x*x-178*a*x
+                newX = points.GetPoint(point)[0] - y
+                newY = points.GetPoint(point)[1] - y/sqrt(3)
+                newPoint = [newX,newY,points.GetPoint(point)[2]]
+                self.universalEdges.GetOutput().GetPoints().SetPoint(point,newPoint)
+                pass
+            
+            if upcurve:
                 if points.GetPoint(point)[2]>self.height:
-                    #not finish
-                    newX = points.GetPoint(point)[0] + change*(points.GetPoint(point)[2]-self.height-15)/3
-                    newY = points.GetPoint(point)[1] + change*(points.GetPoint(point)[2]-self.height-15)/3/sqrt(3)
-                elif points.GetPoint(point)[2]<self.height:
-                    newX = points.GetPoint(point)[0] + change*(self.height-15-points.GetPoint(point)[2])/3
-                    newY = points.GetPoint(point)[1] + change*(self.height-15-points.GetPoint(point)[2])/3/sqrt(3)
+                    t = (points.GetPoint(point)[2]-self.height+self.cigma)/self.cigma
+                    y = change*2*t*(1-t)
+                    #print t
+                    newX = points.GetPoint(point)[0] - y
+                    newY = points.GetPoint(point)[1] - y/sqrt(3)
                 else:
-                    newX = points.GetPoint(point)[0] + change*(points.GetPoint(point)[2]-self.height)
-                    newY = points.GetPoint(point)[1] + change*(points.GetPoint(point)[2]-self.height)/sqrt(3)
+                    newX = points.GetPoint(point)[0] 
+                    newY = points.GetPoint(point)[1] 
+                newPoint = [newX,newY,points.GetPoint(point)[2]]
+                self.universalEdges.GetOutput().GetPoints().SetPoint(point,newPoint)
+            
+            
+            elif self.height+self.cigma>points.GetPoint(point)[2]>self.height-self.cigma:
+                if paracurve:
+                    #test with para-curve
+                    x = (points.GetPoint(point)[2]-self.height)
+                    y = -change/(self.cigma*self.cigma)*x*x+change
+                    newX = points.GetPoint(point)[0] - y
+                    newY = points.GetPoint(point)[1] - y/sqrt(3)
+                    
+                if beizer:
+                    t = (points.GetPoint(point)[2]-self.height+self.cigma)/self.cigma/2
+                    y = change*2*t*(1-t)
+                    #print t
+                    newX = points.GetPoint(point)[0] - y
+                    newY = points.GetPoint(point)[1] - y/sqrt(3)
+                    pass
                 
+                
+                if line:
+                    #compute change of two axis
+                    change = (value - default)/100.0*3
+                    if points.GetPoint(point)[2]>self.height:
+                        #not finish
+                        newX = points.GetPoint(point)[0] + change*(points.GetPoint(point)[2]-self.height-self.cigma)/3
+                        newY = points.GetPoint(point)[1] + change*(points.GetPoint(point)[2]-self.height-self.cigma)/3/sqrt(3)
+                    elif points.GetPoint(point)[2]<self.height:
+                        newX = points.GetPoint(point)[0] + change*(self.height-self.cigma-points.GetPoint(point)[2])/3
+                        newY = points.GetPoint(point)[1] + change*(self.height-self.cigma-points.GetPoint(point)[2])/3/sqrt(3)
+                    else:
+                        newX = points.GetPoint(point)[0] + change*(points.GetPoint(point)[2]-self.height)
+                        newY = points.GetPoint(point)[1] + change*(points.GetPoint(point)[2]-self.height)/sqrt(3)
+                    
+                    
                 newPoint = [newX,newY,points.GetPoint(point)[2]]
                 self.universalEdges.GetOutput().GetPoints().SetPoint(point,newPoint)
                 
@@ -710,10 +895,56 @@ class MainWindow(QtGui.QMainWindow):
         self.ren.AddActor(self.body)
         self.renderWindowInteractor.Render()
         pass 
-                
-        
+    
         
 if __name__ == "__main__":
+    
     app = QtGui.QApplication(sys.argv)
-    window = MainWindow()
+
+    splash= QSplashScreen(QPixmap(":/p/pic.jpg"))
+    splash.show()
+    str = "\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n"
+    app.processEvents()
+    splash.showMessage(str+"          Loading...")
+    time.sleep(0.2)
+    app.processEvents()
+    splash.showMessage(str+"          Importing Qt...100%")
+    time.sleep(0.2)
+    app.processEvents()
+    splash.showMessage(str+"          Importing VTK...100%")
+    time.sleep(0.2)
+    app.processEvents()
+    splash.showMessage(str+"          Rendering interface...37%")
+    time.sleep(0.2)
+    app.processEvents()
+    splash.showMessage(str+"          Rendering interface...55%")
+    time.sleep(0.3) 
+    app.processEvents()  
+    splash.showMessage(str+"          Rendering interface...100%")
+    time.sleep(0.2)
+    app.processEvents()
+    splash.showMessage(str+"          Rendering Model...31%")
+    time.sleep(0.4)
+    app.processEvents()
+    splash.showMessage(str+"          Rendering Model...47%")
+    time.sleep(0.1)
+    app.processEvents()
+    splash.showMessage(str+"          Rendering Model...100%")
+    time.sleep(0.2)
+    app.processEvents()
+    splash.showMessage(str+"          Generating Spline Curve...100%")
+    time.sleep(0.3)
+    app.processEvents()
+    splash.showMessage(str+"          Generating Body...23%")
+    time.sleep(0.1)
+    app.processEvents()
+    splash.showMessage(str+"          Generating Body...54%")
+    time.sleep(0.3)
+    app.processEvents()
+    splash.showMessage(str+"          Generating Body...100%")
+    time.sleep(0.2)
+    app.processEvents()
+    
+    #window = MainWindow()
+    splash.finish(MainWindow())
     sys.exit(app.exec_())
