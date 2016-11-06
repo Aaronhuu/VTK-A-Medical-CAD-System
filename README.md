@@ -10,7 +10,7 @@ Function:
             2. smooth filter
             3. add point to the model to determine the position of spline
             4. create the qt window
-            4. reshape the model of the body 
+            4. reshape the model of the body by 5 different algorithms
             5. modify the brace (haven't finish)
             6. create new .stl file as the brace (haven't finish)
             7. Use 3d printer to print the brace (haven't finish)
